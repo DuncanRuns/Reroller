@@ -1,0 +1,25 @@
+{
+  "required": true,
+  "package": "me.duncanruns.reroller.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "mixins": [
+    "AbstractBlockMixin",
+    "EyeOfEnderEntityMixin",
+    "LevelPropertiesMixin",
+    "LivingEntityMixin",
+    "LootManagerMixin",
+    "MinecraftServerMixin",
+    "MobSpawnerLogicMixin",
+    "PiglinBrainMixin",
+    "WitherSkeletonEntityMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
+  },
+  "client": [
+    "LevelLoadingScreenMixin"
+  ]
+}

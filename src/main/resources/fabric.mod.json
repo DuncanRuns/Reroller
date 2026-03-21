@@ -1,0 +1,29 @@
+{
+	"schemaVersion": 1,
+	"id": "reroller",
+	"version": "${version}",
+	"name": "Reroller",
+	"description": "Standardizes mob drops, block drops, and some other forms of RNG, and allows configurable rerolling of specific parts.",
+	"authors": [
+		"DuncanRuns"
+	],
+	"contact": {
+		"homepage": "https://github.com/DuncanRuns/Reroller/",
+		"sources": "https://github.com/DuncanRuns/Reroller/",
+		"issues": "https://github.com/DuncanRuns/Reroller/issues"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/reroller/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"me.duncanruns.reroller.RerollerMod"
+		]
+	},
+	"mixins": [
+		"reroller.mixins.json"
+	],
+	"depends": {
+		"minecraft": "~1.16.1"
+	}
+}
