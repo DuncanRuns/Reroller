@@ -78,8 +78,10 @@ public class RerollerMod implements ModInitializer {
 
     private static void loadConfig(String config) {
         JsonObject configJson = new Gson().fromJson(config, JsonObject.class);
-        loadSkullConfig(configJson.getAsJsonObject("skull_rerollers"));
-        loadRerollersConfig(configJson.getAsJsonObject("rerollers"));
+        if (configJson.has("skull_rerollers"))
+            loadSkullConfig(configJson.getAsJsonObject("skull_rerollers"));
+        if (configJson.has("rerollers"))
+            loadRerollersConfig(configJson.getAsJsonObject("rerollers"));
     }
 
     private static void clearConfig() {
