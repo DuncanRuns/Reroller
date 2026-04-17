@@ -8,10 +8,10 @@ import net.minecraft.entity.SpawnReason;
 import net.minecraft.entity.SpawnRestriction;
 import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.ListTag;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.MobSpawnerEntry;
 import net.minecraft.world.MobSpawnerLogic;
 import net.minecraft.world.World;
@@ -25,10 +25,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.Optional;
 import java.util.Random;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
+import java.util.stream.IntStream;
 
 @Mixin(MobSpawnerLogic.class)
 public abstract class MobSpawnerLogicMixin {
-
     @Shadow
     protected abstract boolean isPlayerInRange();
 
@@ -109,20 +111,44 @@ public abstract class MobSpawnerLogicMixin {
 
         shouldSpawn = true;
 
-        boolean mobsSpawned = false;
-
-
-        int toAttempt = this.spawnCount;
-        int toSpawn = this.spawnCount;
-
-        // todo: generalize to any mob size
-        if (entityId.equals("minecraft:blaze")) {
-            float obstruction = SpawnerManager.getObstruction((ServerWorld) world, blockPos);
-            toSpawn = SpawnerManager.getRandomSpawnCount(spawnerManager.getSpawnerCountRandom(entityId), obstruction);
-            toAttempt = 1000;
+        CompoundTag entityTag = this.spawnEntry.getEntityTag();
+        Optional<EntityType<?>> entityTypeOpt = EntityType.fromTag(entityTag);
+        if (!entityTypeOpt.isPresent()) {
+            this.updateSpawns();
+            return;
         }
-        long positionSeeding = RNGManager.mixSeed("spawnerpositions/" + entityId + "/" + spawnerManager.getCount(entityId), ((ServerWorld) world).getSeed());
-        Random positionRandom = new Random(positionSeeding);
+
+        long cycleSeeding = RNGManager.mixSeed("spawner/cycle/" + entityId + "/" + spawnerManager.getCount(entityId), ((ServerWorld) world).getSeed());
+        Random cycleRandom = new Random(cycleSeeding);
+
+        long miscRandomSeeding = RNGManager.mixSeed("spawner/misc/" + entityId + "/" + spawnerManager.getCount(entityId), ((ServerWorld) world).getSeed());
+        Random miscRandom = new Random(miscRandomSeeding);
+
+        Predicate<Vec3d> canSpawnPred = pos -> {
+            if (!world.doesNotCollide(entityTypeOpt.get().createSimpleBoundingBox(pos.x, pos.y, pos.z))) return false;
+            return SpawnRestriction.canSpawn(entityTypeOpt.get(), world.getWorld(), SpawnReason.SPAWNER, new BlockPos(pos.x, pos.y, pos.z), miscRandom);
+        };
+        Supplier<Vec3d> posSupplier = () -> {
+            double x = blockPos.getX() + (cycleRandom.nextDouble() - cycleRandom.nextDouble()) * this.spawnRange + 0.5;
+            double y = blockPos.getY() + cycleRandom.nextInt(3) - 1;
+            double z = blockPos.getZ() + (cycleRandom.nextDouble() - cycleRandom.nextDouble()) * this.spawnRange + 0.5;
+            return new Vec3d(x, y, z);
+        };
+
+        long successes = IntStream.range(0, 512)
+                .mapToObj(i -> posSupplier.get())
+                .map(canSpawnPred::test)
+                .filter(b -> b)
+                .count();
+
+        float successChance = (float) successes / 512;
+
+        long toSpawn = Math.max(IntStream.range(0, this.spawnCount)
+                .mapToObj(i -> cycleRandom.nextFloat() < successChance)
+                .filter(b -> b)
+                .count(), 1);
+        int toAttempt = 1000;
+
         while (toSpawn > 0 && toAttempt > 0) {
             toAttempt--;
             CompoundTag compoundTag = this.spawnEntry.getEntityTag();
@@ -131,60 +157,50 @@ public abstract class MobSpawnerLogicMixin {
                 this.updateSpawns();
                 return;
             }
-
-            ListTag listTag = compoundTag.getList("Pos", 6);
-            int j = listTag.size();
-            double g = j >= 1 ? listTag.getDouble(0) : blockPos.getX() + (positionRandom.nextDouble() - positionRandom.nextDouble()) * this.spawnRange + 0.5;
-            double h = j >= 2 ? listTag.getDouble(1) : blockPos.getY() + positionRandom.nextInt(3) - 1;
-            double k = j >= 3 ? listTag.getDouble(2) : blockPos.getZ() + (positionRandom.nextDouble() - positionRandom.nextDouble()) * this.spawnRange + 0.5;
-            if (world.doesNotCollide(optional.get().createSimpleBoundingBox(g, h, k))
-                    && SpawnRestriction.canSpawn(optional.get(), world.getWorld(), SpawnReason.SPAWNER, new BlockPos(g, h, k), world.getRandom())) {
-                Entity entity = EntityType.loadEntityWithPassengers(compoundTag, world, entityx -> {
-                    entityx.refreshPositionAndAngles(g, h, k, entityx.yaw, entityx.pitch);
-                    return entityx;
-                });
-                if (entity == null) {
-                    this.updateSpawns();
-                    return;
-                }
-
-                int l = world.getNonSpectatingEntities(
-                                entity.getClass(),
-                                new Box(blockPos.getX(), blockPos.getY(), blockPos.getZ(), blockPos.getX() + 1, blockPos.getY() + 1, blockPos.getZ() + 1).expand(this.spawnRange)
-                        )
-                        .size();
-                if (l >= this.maxNearbyEntities) {
-                    this.updateSpawns();
-                    return;
-                }
-
-                entity.refreshPositionAndAngles(entity.getX(), entity.getY(), entity.getZ(), world.random.nextFloat() * 360.0F, 0.0F);
-                if (entity instanceof MobEntity) {
-                    MobEntity mobEntity = (MobEntity) entity;
-                    if (!mobEntity.canSpawn(world, SpawnReason.SPAWNER) || !mobEntity.canSpawn(world)) {
-                        continue;
-                    }
-
-                    if (this.spawnEntry.getEntityTag().getSize() == 1 && this.spawnEntry.getEntityTag().contains("id", 8)) {
-                        ((MobEntity) entity).initialize(world, world.getLocalDifficulty(entity.getBlockPos()), SpawnReason.SPAWNER, null, null);
-                    }
-                }
-
-                this.spawnEntity(entity);
-                world.syncWorldEvent(2004, blockPos, 0);
-                if (entity instanceof MobEntity) {
-                    ((MobEntity) entity).playSpawnEffects();
-                }
-
-                toSpawn--;
-                mobsSpawned = true;
+            Vec3d pos = posSupplier.get();
+            if (!canSpawnPred.test(pos)) continue;
+            Entity entity = EntityType.loadEntityWithPassengers(compoundTag, world, entityx -> {
+                entityx.refreshPositionAndAngles(pos.x, pos.y, pos.z, entityx.yaw, entityx.pitch);
+                return entityx;
+            });
+            if (entity == null) {
+                this.updateSpawns();
+                return;
             }
+
+            int l = world.getNonSpectatingEntities(
+                            entity.getClass(),
+                            new Box(blockPos.getX(), blockPos.getY(), blockPos.getZ(), blockPos.getX() + 1, blockPos.getY() + 1, blockPos.getZ() + 1).expand(this.spawnRange)
+                    )
+                    .size();
+            if (l >= this.maxNearbyEntities) {
+                this.updateSpawns();
+                return;
+            }
+
+            entity.refreshPositionAndAngles(entity.getX(), entity.getY(), entity.getZ(), world.random.nextFloat() * 360.0F, 0.0F);
+            if (entity instanceof MobEntity) {
+                MobEntity mobEntity = (MobEntity) entity;
+                if (!mobEntity.canSpawn(world, SpawnReason.SPAWNER) || !mobEntity.canSpawn(world)) {
+                    continue;
+                }
+
+                if (this.spawnEntry.getEntityTag().getSize() == 1 && this.spawnEntry.getEntityTag().contains("id", 8)) {
+                    ((MobEntity) entity).initialize(world, world.getLocalDifficulty(entity.getBlockPos()), SpawnReason.SPAWNER, null, null);
+                }
+            }
+
+            this.spawnEntity(entity);
+            world.syncWorldEvent(2004, blockPos, 0);
+            if (entity instanceof MobEntity) {
+                ((MobEntity) entity).playSpawnEffects();
+            }
+
+            toSpawn--;
         }
 
-        if (mobsSpawned) {
-            this.updateSpawns();
-            shouldSpawn = false;
-        }
+        this.updateSpawns();
+        shouldSpawn = false;
 
 
     }
